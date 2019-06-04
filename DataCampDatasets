@@ -1,0 +1,212 @@
+library(rvest) #Web scraping en R
+library(xml2) #trabaja con HTML y XML en R
+library(dplyr) #manipular data frames
+library(stringr) #funciones para manipular texto
+library(trelliscopejs) #visualizar data larga y compleja
+library(tidyr) # Data en Formato Tidy: Cada variable es una columna. Cada observacion es una fila. Cada valor una celda
+
+
+url <- "https://www.datacamp.com/courses/all"
+datacamp <- read_html(url)
+
+href <- html_nodes(datacamp, css = 'a.course-block__link.ds-snowplow-link-course-block')
+href <- str_match(href, "href=\"(.*?)\">\n")
+href <- href[,2]
+
+
+urlList <- list()
+for(i in href){
+  link <- paste0("https://www.datacamp.com",i)
+  urlList[[link]] <- link
+}
+
+urlList
+
+
+#Create Dataframe
+dataframe <- data.frame(matrix(ncol=16,nrow=261))
+names <- c("CourseTitle","CourseDescription","CourseImage","CourseInfo",
+           "CourseTrack","duration","videos","exercises","participants","points","InstructorName","InstructorDesc",
+           "InstructorOccup","InstructorImage","CourseDatasetTitle",
+           "CourseDatasetFile")
+colnames(dataframe) <- names
+
+
+#LISTA
+
+
+
+for (i in 1:261){
+      #Read HTML 
+      html_file <- read_html(as.character(urlList[i]))
+      
+      #Course Title
+      title <- html_node(html_file, css  = 'h1.header-hero__title')
+      title <- title %>% html_text()
+      dataframe$CourseTitle[i] <- title
+      #Course Description
+      course_desc <- html_nodes(html_file,css="p.course__description")
+      course_desc <- course_desc %>% html_text()
+      dataframe$CourseDescription[i] <- course_desc 
+      ##Course Image
+      course_image <- html_nodes(html_file,css = "img.header-hero__image")
+      course_image <- str_match(course_image, "src=\"(.*?)\"")
+      course_image <- course_image[,2]
+      dataframe$CourseImage[i] <- course_image
+      #Download Course Image
+      
+      ##Course Info
+      course_info <- html_nodes(html_file, css="ul.header-hero__stats")
+      course_info <- course_info %>% html_text()
+      course_info <- strsplit(course_info, "\n ")
+      mat_info <- matrix(unlist(course_info), ncol=6, byrow=TRUE)
+      dataframe$duration[i] <- mat_info[1]
+      dataframe$videos[i] <- mat_info[2]
+      dataframe$exercises[i] <- mat_info[3]
+      dataframe$participants[i] <- mat_info[4]
+      dataframe$points[i] <- mat_info[5]
+    
+      #Course Track
+      course_track <- html_nodes(html_file,css="ul.course__tracks")
+      course_track <- course_track %>% html_text()
+      course_track <- str_split(course_track, "\n")
+      
+      if (length(course_track)==0){
+        dataframe$CourseTrack[i] <- "Null"
+      }else{
+        dataframe$CourseTrack[i]  <- course_track
+      }
+      ##Course Dataset  
+      course_data <- html_nodes(html_file,css="li.course__dataset")
+      course_data <- str_match(course_data,"href=\"(.*?)\"")
+      course_data <- list(course_data[,2])
+      
+      if (length(course_data)==0){
+        dataframe$CourseDatasetFile[i] <- "Null"
+        
+      }else{
+        dataframe$CourseDatasetFile[i] <- course_data
+        
+      }
+      
+      #Download DatasetFile
+      
+      #Dataset Title
+      course_data_title <- html_nodes(html_file,css="li.course__dataset")
+      course_data_title <- list(html_text(course_data_title))
+      
+      if (length(course_data_title)==0){
+        dataframe$CourseDatasetTitle[i] <- "Null"
+        
+      }else{
+        dataframe$CourseDatasetTitle[i] <- course_data_title
+        
+      }
+      
+      #Instructor Name and Image
+      inst_name_img <- html_nodes(html_file, css  = 'div.course__instructor-header') 
+      inst_name <- str_match(inst_name_img, "alt=\"(.*?)\"")
+      inst_image <- str_match(inst_name_img,"src=\"(.*?)\"")
+      inst_name <- inst_name[,2]
+      inst_image <- inst_image[,2]
+      dataframe$InstructorName[i] <- inst_name
+      dataframe$InstructorImage[i] <- inst_image
+      ##Instructor Description
+      inst_desc <- html_nodes(html_file,css="p.course__instructor-description")
+      inst_desc <- inst_desc %>% html_text()
+      dataframe$InstructorDesc[i] <- inst_desc
+      ##Instructor Occupation
+      inst_ocu <- html_nodes(html_file, css  = 'p.course__instructor-occupation') 
+      inst_ocu <- str_match(inst_ocu,"on\">(.*?)</p")
+      inst_ocu <- inst_ocu[,2]
+      dataframe$InstructorOccup[i] <- inst_ocu
+      
+}
+
+#Doesnt have the same length as others necesitara un left join
+df_with_datasets <- unnest(df,df$CourseDatasetTitle,df$CourseDatasetFile)
+head(df_with_datasets,15)
+names(df_with_datasets)
+
+
+#dataframe
+df <- dataframe
+head(dataframe)
+
+#TRACKS
+df_tracks <- unnest(data = df,df$CourseTrack,.preserve = df$CourseTrack)
+df_tracks <- df_tracks[,c(1,8)] 
+df_tracks$`df$CourseTrack` <- gsub(" ", "", df_tracks$`df$CourseTrack`) 
+df_tracks <- subset(df_tracks,df_tracks$`df$CourseTrack` != "")
+df_tracks_join <- subset(df_tracks,df_tracks$`df$CourseTrack` != "Null")
+
+names(df_tracks_join)
+df_tracks_join
+
+
+#JOIN With datasets and tracks
+df_before_string_editing <- merge(x=df_with_datasets,y=df_tracks_join,by="CourseTitle",all.x=TRUE)
+dim(df_before_string_editing)
+
+
+
+
+#Limpiar nombres de datasets
+df_before_string_editing$`df$CourseDatasetTitle` <- gsub(" ", "", df_before_string_editing$`df$CourseDatasetTitle`)
+df_before_string_editing$`df$CourseDatasetTitle` <- gsub("\n", "", df_before_string_editing$`df$CourseDatasetTitle`)
+final_dataframe <- select(df_before_string_editing,c("CourseTitle","CourseDescription","CourseImage",
+                                                     "duration","videos","exercises","participants",
+                                                     "points","InstructorName","InstructorDesc",
+                                                     "InstructorOccup","InstructorImage","df$CourseDatasetTitle",
+                                                     "df$CourseDatasetFile","df$CourseTrack"))
+names <- c("CourseTitle","CourseDescription","CourseImage",
+  "Duration","Videos","Exercises","Participants",
+  "Points","InstructorName","InstructorDesc",
+  "InstructorOccup","InstructorImage","CourseDatasetTitle",
+  "CourseDatasetFile","CourseTrack")
+colnames(final_dataframe) <- names
+
+head(final_dataframe)
+
+#Crear Path
+path <- file.path(tempdir(), "datacamp_local_course")
+dir.create(path)
+
+#Download Images Course
+for (url in final_dataframe$CourseImage){
+    download.file(url,destfile = file.path(path,basename(url)))
+}
+
+
+
+
+
+
+final_dataframe_to_show_1 <- mutate(final_dataframe,panel=img_panel_local(CourseImage))
+trelliscope(final_dataframe_to_show_1,name= "DataCamp Trelliscope",nrow = 3,ncol=3,path = path,
+            height = 500, width = 700)
+
+
+
+
+
+final_dataframe_to_show_2 <- mutate(final_dataframe_to_show,panel=img_panel_local(imageInst))
+
+trelliscope(final_dataframe_to_show_1,name= "DataCamp Trelliscope",nrow = 3,ncol=3,path = path,
+            height = 500, width = 700)
+
+trelliscope(final_dataframe_to_show_2,name= "DataCamp Trelliscope",nrow = 3,ncol=3,path = path,
+            height = 500, width = 700)
+
+ 
+
+
+
+
+
+
+
+
+
+
+
